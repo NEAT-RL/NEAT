@@ -18,17 +18,12 @@ import matplotlib.pyplot as plt
 import neat
 import numpy as np
 import gym
+from datetime import datetime
 
 import visualize
 
 
-discounted_reward = 0.9
-min_reward = -200
-max_reward = 200
-score_range = []
-
-
-class NeatAC(object):
+class Neat(object):
     def __init__(self, config):
         pop = neat.Population(config)
         self.stats = neat.StatisticsReporter()
@@ -49,64 +44,33 @@ class NeatAC(object):
             nets.append((g, neat.nn.FeedForwardNetwork.create(g, config)))
             g.fitness = []
 
-        episodes = []
-
         for genome, net in nets:
             # run episodes
-            episode_data = []
-            total_score = 0.0
             episode_count = 0
-            MAX_EPISODES = 200
-            while True:
+            MAX_EPISODES = 1
+            total_score = 0
+            while episode_count < MAX_EPISODES:
                 state = env.reset()
                 terminal_reached = False
                 while not terminal_reached:
-                    if net is not None:
-                        # take action based on observation
-                        nn_output = net.activate(state)
-                        action = np.argmax(nn_output)
-                    else:
-                        # otherwise take a sample action
-                        action = env.action_space.sample()
+                    # take action based on observation
+                    nn_output = net.activate(state)
+                    action = np.argmax(nn_output)
 
                     # perform next step
                     observation, reward, done, info = env.step(action)
                     total_score += reward
-                    episode_data.append((episode_count, observation, action, reward))
 
                     if done:
                         terminal_reached = True
 
                 episode_count += 1
-                if episode_count >= MAX_EPISODES:
-                    break
 
-            ## assign fitness to be total rewards / number of episodes
-            episodes.append((total_score/episode_count, episode_data))
-            # fitness is total score/episode_count
+            # assign fitness to be total rewards / number of episodes
             genome.fitness = total_score/episode_count
 
 
-
-        scores = [score for score, episode in episodes]
-        score_range.append((min(scores), np.mean(scores), max(scores)))
-
-        print(min(map(np.min, score_range)), max(map(np.max, score_range)))
-
-
-
-
-
-
 if __name__ == '__main__':
-    # these belong to NEAT class
-    # discounted_reward = 0.9
-    # min_reward = -200
-    # max_reward = 200
-    # score_range = []
-    # above belong to NEAT class
-
-
     parser = argparse.ArgumentParser(description=None)
     parser.add_argument('env_id', nargs='?', default='MountainCar-v0', help='Select the environment to run')
     args = parser.parse_args()
@@ -115,6 +79,9 @@ if __name__ == '__main__':
     # and configure things manually. (The default should be fine most
     # of the time.)
     gym.undo_logger_setup()
+
+    logging.basicConfig(filename='log.debug-{0}.log'.format(datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")),
+                        level=logging.DEBUG)
     logger = logging.getLogger()
     formatter = logging.Formatter('[%(asctime)s] %(message)s')
     handler = logging.StreamHandler(sys.stderr)
@@ -123,24 +90,24 @@ if __name__ == '__main__':
 
     # You can set the level to logging.DEBUG or logging.WARN if you
     # want to change the amount of output.
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
-    env = gym.make(args.env_id)
+    env = gym.make(args.env_id).env
     print("action space: {0!r}".format(env.action_space))
     print("observation space: {0!r}".format(env.observation_space))
 
     # Limit episode time steps to cut down on training time.
     # 400 steps is more than enough time to land with a winning score.
-    print(env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps'))
-    env.spec.tags['wrapper_config.TimeLimit.max_episode_steps'] = 400
-    print(env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps'))
+    # print(env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps'))
+    # env.spec.tags['wrapper_config.TimeLimit.max_episode_steps'] = 400
+    # print(env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps'))
 
     # You provide the directory to write to (can be an existing
     # directory, including one with existing data -- all monitor files
     # will be namespaced). You can also dump to a tempdir if you'd
     # like: tempfile.mkdtemp().
-    outdir = '/tmp/neat-agent-results'
-    env = wrappers.Monitor(env, directory=outdir, force=True)
+    outdir = '/tmp/neat-' + datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")
+    # env = wrappers.Monitor(env, directory=outdir, force=True)
 
     # run the algorithm
 
@@ -152,24 +119,15 @@ if __name__ == '__main__':
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
-    agent = NeatAC(config)
+    agent = Neat(config)
 
     # Run until the winner from a generation is able to solve the environment
     # or the user interrupts the process.
     while 1:
         try:
-            agent.execute_algorithm(1)
+            agent.execute_algorithm(50)
 
             visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness.svg")
-
-            if score_range:
-                S = np.array(score_range).T
-                plt.plot(S[0], 'r-')
-                plt.plot(S[1], 'b-')
-                plt.plot(S[2], 'g-')
-                plt.grid()
-                plt.savefig("score-ranges.svg")
-                plt.close()
 
             mfs = sum(agent.stats.get_fitness_mean()[-5:]) / 5.0
             print("Average mean fitness over last 5 generations: {0}".format(mfs))
@@ -183,47 +141,17 @@ if __name__ == '__main__':
             for g in best_genomes:
                 best_networks.append(neat.nn.FeedForwardNetwork.create(g, config))
 
-            solved = True
-            best_scores = []
-            for k in range(100):
-                observation = env.reset()
-                score = 0
-                while 1:
-                    # Use the total reward estimates from all five networks to
-                    # determine the best action given the current state.
-                    total_rewards = np.zeros((3,))
-                    for n in best_networks:
-                        output = n.activate(observation)
-                        total_rewards += output
+            # Save the winners
+            for n, g in enumerate(best_genomes):
+                name = 'winner-{0}'.format(n)
+                with open(name + '.pickle', 'wb') as f:
+                    pickle.dump(g, f)
 
-                    best_action = np.argmax(total_rewards)
-                    observation, reward, done, info = env.step(best_action)
-                    score += reward
-                    env.render()
-                    if done:
-                        break
-
-                best_scores.append(score)
-                avg_score = sum(best_scores) / len(best_scores)
-                print(k, score, avg_score)
-                if avg_score < 200:
-                    solved = False
-                    break
-
-            if solved:
-                print("Solved.")
-
-                # Save the winners.
-                for n, g in enumerate(best_genomes):
-                    name = 'winner-{0}'.format(n)
-                    with open(name + '.pickle', 'wb') as f:
-                        pickle.dump(g, f)
-
-                    visualize.draw_net(config, g, view=False, filename=name + "-net.gv")
-                    visualize.draw_net(config, g, view=False, filename="-net-enabled.gv",
-                                       show_disabled=False)
-                    visualize.draw_net(config, g, view=False, filename="-net-enabled-pruned.gv",
-                                       show_disabled=False, prune_unused=True)
+                visualize.draw_net(config, g, view=False, filename=name + "-net.gv")
+                visualize.draw_net(config, g, view=False, filename="-net-enabled.gv",
+                                   show_disabled=False)
+                visualize.draw_net(config, g, view=False, filename="-net-enabled-pruned.gv",
+                                   show_disabled=False, prune_unused=True)
 
                 break
         except KeyboardInterrupt:
