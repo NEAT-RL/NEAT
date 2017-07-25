@@ -1,15 +1,8 @@
-# Evolve a control/reward estimation network for the OpenAI Gym
-# LunarLander-v2 environment (https://gym.openai.com/envs/LunarLander-v2).
-# Sample run here: https://gym.openai.com/evaluations/eval_FbKq5MxAS9GlvB7W6ioJkg
-# NOTE: This was run using revision 1186029827c156e0ff6f9b36d6847eb2aa56757a of CodeReclaimers/neat-python, not a release on PyPI.
-
 from __future__ import print_function
 
 import multiprocessing
 import os
 import pickle
-import random
-import time
 import argparse
 import logging
 import sys
@@ -34,6 +27,7 @@ class Neat(object):
         self.config = config
         self.population = pop
         self.pool = multiprocessing.Pool()
+        self.generation_count = 0
 
     def execute_algorithm(self, generations):
         self.population.run(self.fitness_function, generations)
@@ -44,15 +38,17 @@ class Neat(object):
             nets.append((g, neat.nn.FeedForwardNetwork.create(g, config)))
             g.fitness = []
 
-        for genome, net in nets:
+        for i, (genome, net) in enumerate(nets):
             # run episodes
             episode_count = 0
-            MAX_EPISODES = 1
+            MAX_EPISODES = 200
             total_score = 0
             while episode_count < MAX_EPISODES:
                 state = env.reset()
                 terminal_reached = False
-                while not terminal_reached:
+                max_steps = 200
+                step = 0
+                while not terminal_reached and step < max_steps:
                     # take action based on observation
                     nn_output = net.activate(state)
                     action = np.argmax(nn_output)
@@ -60,14 +56,24 @@ class Neat(object):
                     # perform next step
                     observation, reward, done, info = env.step(action)
                     total_score += reward
-
+                    step += 1
                     if done:
                         terminal_reached = True
 
                 episode_count += 1
 
-            # assign fitness to be total rewards / number of episodes
+            # assign fitness to be total rewards / number of episodes == steps per episodes
             genome.fitness = total_score/episode_count
+
+        # save the best individual's genome
+        genome, net = max(nets, key=lambda x: x[0].fitness)
+        logger.debug("Best genome: %s", genome)
+        logger.debug("Best genome fitness: %f", genome.fitness)
+        # save genome
+        with open('best_genomes/gen-{0}-genome'.format(self.generation_count), 'wb') as f:
+            pickle.dump(genome, f)
+
+        self.generation_count += 1
 
 
 if __name__ == '__main__':
@@ -80,7 +86,7 @@ if __name__ == '__main__':
     # of the time.)
     gym.undo_logger_setup()
 
-    logging.basicConfig(filename='log.debug-{0}.log'.format(datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")),
+    logging.basicConfig(filename='log/log.debug-{0}.log'.format(datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")),
                         level=logging.DEBUG)
     logger = logging.getLogger()
     formatter = logging.Formatter('[%(asctime)s] %(message)s')
@@ -93,8 +99,8 @@ if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
 
     env = gym.make(args.env_id).env
-    print("action space: {0!r}".format(env.action_space))
-    print("observation space: {0!r}".format(env.observation_space))
+    logger.debug("action space: %s", env.action_space)
+    logger.debug("observation space: %s", env.observation_space)
 
     # Limit episode time steps to cut down on training time.
     # 400 steps is more than enough time to land with a winning score.
@@ -125,37 +131,34 @@ if __name__ == '__main__':
     # or the user interrupts the process.
     while 1:
         try:
-            agent.execute_algorithm(50)
+            agent.execute_algorithm(100)
 
             visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness.svg")
 
-            mfs = sum(agent.stats.get_fitness_mean()[-5:]) / 5.0
-            print("Average mean fitness over last 5 generations: {0}".format(mfs))
+            mfs = sum(agent.stats.get_fitness_mean()[-20:]) / 20.0
+            logger.debug("Average mean fitness over last 20 generations: %f", mfs)
 
-            mfs = sum(agent.stats.get_fitness_stat(min)[-5:]) / 5.0
-            print("Average min fitness over last 5 generations: {0}".format(mfs))
+            mfs = sum(agent.stats.get_fitness_stat(min)[-20:]) / 20.0
+            logger.debug("Average min fitness over last 20 generations: %f", mfs)
 
-            # Use the five best genomes seen so far as an ensemble-ish control system.
-            best_genomes = agent.stats.best_unique_genomes(5)
-            best_networks = []
-            for g in best_genomes:
-                best_networks.append(neat.nn.FeedForwardNetwork.create(g, config))
+            # Use the ten best genomes seen so far as an ensemble-ish control system.
+            best_genomes = agent.stats.best_unique_genomes(10)
 
             # Save the winners
             for n, g in enumerate(best_genomes):
-                name = 'winner-{0}'.format(n)
+                name = 'winners\winner-{0}'.format(n)
                 with open(name + '.pickle', 'wb') as f:
                     pickle.dump(g, f)
 
                 visualize.draw_net(config, g, view=False, filename=name + "-net.gv")
-                visualize.draw_net(config, g, view=False, filename="-net-enabled.gv",
+                visualize.draw_net(config, g, view=False, filename=name + "-net-enabled.gv",
                                    show_disabled=False)
-                visualize.draw_net(config, g, view=False, filename="-net-enabled-pruned.gv",
+                visualize.draw_net(config, g, view=False, filename=name + "-net-enabled-pruned.gv",
                                    show_disabled=False, prune_unused=True)
 
                 break
         except KeyboardInterrupt:
-            print("User break.")
+            logger.debug("User break.")
             break
 
     env.close()
