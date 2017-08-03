@@ -27,7 +27,6 @@ class Neat(object):
         self.config = config
         self.population = pop
         self.pool = multiprocessing.Pool()
-        self.generation_count = 0
 
     def execute_algorithm(self, generations):
         self.population.run(self.fitness_function, generations)
@@ -41,7 +40,7 @@ class Neat(object):
         for i, (genome, net) in enumerate(nets):
             # run episodes
             episode_count = 0
-            MAX_EPISODES = 200
+            MAX_EPISODES = 1
             total_score = 0
             while episode_count < MAX_EPISODES:
                 state = env.reset()
@@ -49,11 +48,14 @@ class Neat(object):
                 max_steps = 200
                 step = 0
                 while not terminal_reached and step < max_steps:
+                    env.render()
                     # take action based on observation
                     nn_output = net.activate(state)
                     action = np.argmax(nn_output)
 
                     # perform next step
+                    observation, reward, done, info = env.step(action)
+                    total_score += reward
                     observation, reward, done, info = env.step(action)
                     total_score += reward
                     step += 1
@@ -70,15 +72,14 @@ class Neat(object):
         logger.debug("Best genome: %s", genome)
         logger.debug("Best genome fitness: %f", genome.fitness)
         # save genome
-        with open('best_genomes/gen-{0}-genome'.format(self.generation_count), 'wb') as f:
-            pickle.dump(genome, f)
+        # with open('best_genomes/gen-{0}-genome'.format(self.generation_count), 'wb') as f:
+        #     pickle.dump(genome, f)
 
-        self.generation_count += 1
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=None)
-    parser.add_argument('env_id', nargs='?', default='MountainCar-v0', help='Select the environment to run')
+    parser.add_argument('env_id', nargs='?', default='CartPole-v0', help='Select the environment to run')
     args = parser.parse_args()
 
     # Call `undo_logger_setup` if you want to undo Gym's logger setup
@@ -96,9 +97,10 @@ if __name__ == '__main__':
 
     # You can set the level to logging.DEBUG or logging.WARN if you
     # want to change the amount of output.
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.ERROR)
 
-    env = gym.make(args.env_id).env
+    env = gym.make(args.env_id)
+    env = env.env
     logger.debug("action space: %s", env.action_space)
     logger.debug("observation space: %s", env.observation_space)
 
@@ -112,7 +114,7 @@ if __name__ == '__main__':
     # directory, including one with existing data -- all monitor files
     # will be namespaced). You can also dump to a tempdir if you'd
     # like: tempfile.mkdtemp().
-    outdir = '/tmp/neat-' + datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")
+    # outdir = '/tmp/neat-' + datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")
     # env = wrappers.Monitor(env, directory=outdir, force=True)
 
     # run the algorithm
