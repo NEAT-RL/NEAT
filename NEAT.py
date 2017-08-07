@@ -1,18 +1,19 @@
 from __future__ import print_function
 
+import argparse
+import configparser
+import csv
+import logging
 import multiprocessing
 import os
 import pickle
-import argparse
-import logging
 import sys
-import gym.wrappers as wrappers
-import matplotlib.pyplot as plt
-import neat
-import numpy as np
-import gym
 from datetime import datetime
 
+import gym
+import gym.wrappers as wrappers
+import neat
+import numpy as np
 import visualize
 
 
@@ -27,11 +28,15 @@ class Neat(object):
         self.config = config
         self.population = pop
         self.pool = multiprocessing.Pool()
+        self.generation_count = 0
+        self.best_agents = []
 
     def execute_algorithm(self, generations):
         self.population.run(self.fitness_function, generations)
 
     def fitness_function(self, genomes, config):
+        t_start = datetime.now()
+
         nets = []
         for gid, g in genomes:
             nets.append((g, neat.nn.FeedForwardNetwork.create(g, config)))
@@ -39,42 +44,97 @@ class Neat(object):
 
         for i, (genome, net) in enumerate(nets):
             # run episodes
-            episode_count = 0
-            MAX_EPISODES = 1
-            total_score = 0
-            while episode_count < MAX_EPISODES:
-                state = env.reset()
-                terminal_reached = False
-                max_steps = 200
-                step = 0
-                while not terminal_reached and step < max_steps:
-                    env.render()
-                    # take action based on observation
-                    nn_output = net.activate(state)
-                    action = np.argmax(nn_output)
+            state = env.reset()
+            terminal_reached = False
+            step_size = props.getint('initialisation', 'step_size')
+            step = 0
+            total_rewards = 0
+            while not terminal_reached:
+                # take action based on observation
+                nn_output = net.activate(state)
+                action = np.argmax(nn_output)
 
-                    # perform next step
-                    observation, reward, done, info = env.step(action)
-                    total_score += reward
-                    observation, reward, done, info = env.step(action)
-                    total_score += reward
-                    step += 1
+                # perform next step
+                observation, reward, done, info = env.step(action)
+                total_rewards += reward
+                for x in range(step_size - 1):
                     if done:
                         terminal_reached = True
+                        break
+                    observation, reward, done, info = env.step(action)
+                    total_rewards += reward
 
-                episode_count += 1
+                step += 1
+                if done:
+                    terminal_reached = True
 
-            # assign fitness to be total rewards / number of episodes == steps per episodes
-            genome.fitness = total_score/episode_count
+            # assign fitness to be total rewards
+            genome.fitness = total_rewards
 
-        # save the best individual's genome
-        genome, net = max(nets, key=lambda x: x[0].fitness)
-        logger.debug("Best genome: %s", genome)
-        logger.debug("Best genome fitness: %f", genome.fitness)
+        # sort the genomes by fitness
+        nets_sorted = sorted(nets, key=lambda x: x[0].fitness, reverse=True)
+        # save the best individual's genomes
+        best_genome, best_net = nets_sorted[0]
+        self.best_agents.append((self.generation_count, best_genome, best_net))
+        logger.debug("Best genome fitness: %f", best_genome.fitness)
+
+        worst_genome, worst_net = nets_sorted[len(nets_sorted) - 1]
+        logger.debug("Worst genome fitness: %f", worst_genome.fitness)
+
         # save genome
-        # with open('best_genomes/gen-{0}-genome'.format(self.generation_count), 'wb') as f:
-        #     pickle.dump(genome, f)
+        with open('best_genomes/gen-{0}-genome'.format(self.generation_count), 'wb') as f:
+            pickle.dump(best_genome, f)
 
+        logger.debug("Completed generation: %d. Time taken: %f", self.generation_count,
+                     (datetime.now() - t_start).total_seconds())
+        self.generation_count += 1
+
+
+def test_best_agent(generation_count, genome, net):
+    logger.debug("Generating best agent result: %d", generation_count)
+    t_start = datetime.now()
+
+    test_episodes = props.getint('test', 'test_episodes')
+    step_size = props.getint('initialisation', 'step_size')
+
+    total_steps = 0.0
+    total_rewards = 0.0
+
+    for i in range(test_episodes):
+        state = env.reset()
+        terminal_reached = False
+        steps = 0
+        while not terminal_reached:
+            env.render()
+            output = net.activate(state)
+            action = np.argmax(output)
+            next_state, reward, done, info = env.step(action)
+
+            for x in range(step_size - 1):
+                if done:
+                    terminal_reached = True
+                    break
+                next_state, reward2, done, info = env.step(action)
+                reward += reward2
+
+            total_rewards += reward
+            state = next_state
+
+            steps += 1
+            if done:
+                terminal_reached = True
+        total_steps += steps
+
+    average_steps_per_episode = total_steps / test_episodes
+    average_rewards_per_episode = total_rewards / test_episodes
+
+    # save this to file along with the generation number
+    entry = [generation_count, average_steps_per_episode, average_rewards_per_episode]
+    with open(r'agent_evaluation.csv', 'a') as f:
+        writer = csv.writer(f)
+        writer.writerow(entry)
+
+    logger.debug("Finished: evaluating best agent. Time taken: %f", (datetime.now() - t_start).total_seconds())
 
 
 if __name__ == '__main__':
@@ -87,7 +147,7 @@ if __name__ == '__main__':
     # of the time.)
     gym.undo_logger_setup()
 
-    logging.basicConfig(filename='log/log.debug-{0}.log'.format(datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")),
+    logging.basicConfig(filename='log/debug-{0}.log'.format(datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")),
                         level=logging.DEBUG)
     logger = logging.getLogger()
     formatter = logging.Formatter('[%(asctime)s] %(message)s')
@@ -97,32 +157,24 @@ if __name__ == '__main__':
 
     # You can set the level to logging.DEBUG or logging.WARN if you
     # want to change the amount of output.
-    logger.setLevel(logging.ERROR)
+    logger.setLevel(logging.DEBUG)
 
     env = gym.make(args.env_id)
-    env = env.env
+
     logger.debug("action space: %s", env.action_space)
     logger.debug("observation space: %s", env.observation_space)
 
-    # Limit episode time steps to cut down on training time.
-    # 400 steps is more than enough time to land with a winning score.
-    # print(env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps'))
-    # env.spec.tags['wrapper_config.TimeLimit.max_episode_steps'] = 400
-    # print(env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps'))
-
-    # You provide the directory to write to (can be an existing
-    # directory, including one with existing data -- all monitor files
-    # will be namespaced). You can also dump to a tempdir if you'd
-    # like: tempfile.mkdtemp().
-    # outdir = '/tmp/neat-' + datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")
-    # env = wrappers.Monitor(env, directory=outdir, force=True)
-
-    # run the algorithm
-
-    # Load the config file, which is assumed to live in
-    # the same directory as this script.
+    # Load the properties file
     local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config')
+    logger.debug("Loading Properties")
+    props = configparser.ConfigParser()
+    prop_path = os.path.join(local_dir, 'properties/{0}/neatem_properties.ini'.format(env.spec.id))
+    props.read(prop_path)
+    logger.debug("Finished: Loading Properties")
+
+    # Load the config file, which is assumed to live in properties/[environment id] directory
+    logger.debug("Loading NEAT Config file")
+    config_path = os.path.join(local_dir, 'properties/{0}/config'.format(env.spec.id))
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
@@ -131,37 +183,46 @@ if __name__ == '__main__':
 
     # Run until the winner from a generation is able to solve the environment
     # or the user interrupts the process.
-    while 1:
-        try:
-            agent.execute_algorithm(100)
+    env_monitor_setup = False
+    try:
 
-            visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness.svg")
+        agent.execute_algorithm(props.getint('train', 'generation'))
 
-            mfs = sum(agent.stats.get_fitness_mean()[-20:]) / 20.0
-            logger.debug("Average mean fitness over last 20 generations: %f", mfs)
+        visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness.svg")
 
-            mfs = sum(agent.stats.get_fitness_stat(min)[-20:]) / 20.0
-            logger.debug("Average min fitness over last 20 generations: %f", mfs)
+        # generate test results and record gameplay
+        if not env_monitor_setup:
+            outdir = 'videos/tmp/neat-data/{0}-{1}'.format(env.spec.id, str(datetime.now()))
+            env = wrappers.Monitor(env, directory=outdir, force=True)
+            env_monitor_setup = True
 
-            # Use the ten best genomes seen so far as an ensemble-ish control system.
-            best_genomes = agent.stats.best_unique_genomes(10)
+        for (generation_count, genome, net) in agent.best_agents:
+            test_best_agent(generation_count, genome, net)
 
-            # Save the winners
-            for n, g in enumerate(best_genomes):
-                name = 'winners\winner-{0}'.format(n)
-                with open(name + '.pickle', 'wb') as f:
-                    pickle.dump(g, f)
+        mfs = sum(agent.stats.get_fitness_mean()[-20:]) / 20.0
+        logger.debug("Average mean fitness over last 20 generations: %f", mfs)
 
-                visualize.draw_net(config, g, view=False, filename=name + "-net.gv")
-                visualize.draw_net(config, g, view=False, filename=name + "-net-enabled.gv",
-                                   show_disabled=False)
-                visualize.draw_net(config, g, view=False, filename=name + "-net-enabled-pruned.gv",
-                                   show_disabled=False, prune_unused=True)
+        mfs = sum(agent.stats.get_fitness_stat(min)[-20:]) / 20.0
+        logger.debug("Average min fitness over last 20 generations: %f", mfs)
 
-                break
-        except KeyboardInterrupt:
-            logger.debug("User break.")
+        # Use the ten best genomes seen so far as an ensemble-ish control system.
+        best_genomes = agent.stats.best_unique_genomes(10)
+
+        # Save the winners
+        for n, g in enumerate(best_genomes):
+            name = 'winners/winner-{0}'.format(n)
+            with open(name + '.pickle', 'wb') as f:
+                pickle.dump(g, f)
+
+            visualize.draw_net(config, g, view=False, filename=name + "-net.gv")
+            visualize.draw_net(config, g, view=False, filename=name + "-net-enabled.gv",
+                               show_disabled=False)
+            visualize.draw_net(config, g, view=False, filename=name + "-net-enabled-pruned.gv",
+                               show_disabled=False, prune_unused=True)
+
             break
+    except KeyboardInterrupt:
+        logger.debug("User break.")
 
     env.close()
 
