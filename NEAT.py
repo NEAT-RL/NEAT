@@ -39,37 +39,9 @@ class Neat(object):
 
         nets = []
         for gid, g in genomes:
-            nets.append((g, neat.nn.FeedForwardNetwork.create(g, config)))
-            g.fitness = []
-
-        for i, (genome, net) in enumerate(nets):
-            # run episodes
-            state = env.reset()
-            terminal_reached = False
-            step_size = props.getint('initialisation', 'step_size')
-            step = 0
-            total_rewards = 0
-            while not terminal_reached:
-                # take action based on observation
-                nn_output = net.activate(state)
-                action = np.argmax(nn_output)
-
-                # perform next step
-                observation, reward, done, info = env.step(action)
-                total_rewards += reward
-                for x in range(step_size - 1):
-                    if done:
-                        terminal_reached = True
-                        break
-                    observation, reward, done, info = env.step(action)
-                    total_rewards += reward
-
-                step += 1
-                if done:
-                    terminal_reached = True
-
-            # assign fitness to be total rewards
-            genome.fitness = total_rewards
+            net = neat.nn.FeedForwardNetwork.create(g, config)
+            g.fitness = self.perform_rollout(net)
+            nets.append((g, net))
 
         # sort the genomes by fitness
         nets_sorted = sorted(nets, key=lambda x: x[0].fitness, reverse=True)
@@ -88,6 +60,36 @@ class Neat(object):
         logger.debug("Completed generation: %d. Time taken: %f", self.generation_count,
                      (datetime.now() - t_start).total_seconds())
         self.generation_count += 1
+
+    @staticmethod
+    def perform_rollout(net):
+        # run episodes
+        state = env.reset()
+        terminal_reached = False
+        step_size = props.getint('initialisation', 'step_size')
+        max_steps = props.getint('initialisation', 'max_steps')
+        total_reward = 0
+        steps = 0
+        while not terminal_reached and steps < max_steps:
+            # take action based on observation
+            nn_output = net.activate(state)
+            action = np.argmax(nn_output)
+
+            # perform next step
+            state, reward, done, info = env.step(action)
+            total_reward += reward
+            for x in range(step_size - 1):
+                if done:
+                    terminal_reached = True
+                    break
+                state, reward, done, info = env.step(action)
+                total_reward += reward
+
+            steps += 1
+            if done:
+                terminal_reached = True
+
+        return total_reward
 
 
 def test_best_agent(generation_count, genome, net):
