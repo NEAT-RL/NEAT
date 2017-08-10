@@ -8,7 +8,7 @@ pop_size              = 100
 # Note: the fitness threshold will never be reached because
 # we are controlling the termination ourselves based on simulation performance.
 fitness_criterion     = max
-fitness_threshold     = 10000
+fitness_threshold     = 1000
 reset_on_extinction   = 0
 
 [DefaultGenome]
@@ -22,7 +22,7 @@ compatibility_weight_coefficient   = 0.6
 conn_add_prob           = 0.2
 conn_delete_prob        = 0.2
 node_add_prob           = 0.2
-node_delete_prob        = 0.2
+node_delete_prob        = 0.0
 activation_default      = sigmoid
 activation_options      = sigmoid
 activation_mutate_rate  = 0.0
