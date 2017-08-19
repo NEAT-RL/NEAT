@@ -1,7 +1,7 @@
 # neat checkpoints
 neat-checkpoint*
-fitness.svg
-agent_evaluation.csv
+fitness*.svg
+agent_evaluation*.csv
 
 # notes
 notes.txt

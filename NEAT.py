@@ -24,7 +24,7 @@ class Neat(object):
         pop.add_reporter(self.stats)
         pop.add_reporter(neat.StdOutReporter(True))
         # Checkpoint every 10 generations or 900 seconds.
-        pop.add_reporter(neat.Checkpointer(10, 900))
+        # pop.add_reporter(neat.Checkpointer(10, 900))
         self.config = config
         self.population = pop
         self.pool = multiprocessing.Pool()
@@ -45,6 +45,7 @@ class Neat(object):
 
         # sort the genomes by fitness
         nets_sorted = sorted(nets, key=lambda x: x[0].fitness, reverse=True)
+
         # save the best individual's genomes
         best_genome, best_net = nets_sorted[0]
         self.best_agents.append((self.generation_count, best_genome, best_net))
@@ -53,7 +54,7 @@ class Neat(object):
         worst_genome, worst_net = nets_sorted[len(nets_sorted) - 1]
         logger.debug("Worst genome fitness: %f", worst_genome.fitness)
 
-        # save genome
+        # save genome to file
         with open('best_genomes/gen-{0}-genome'.format(self.generation_count), 'wb') as f:
             pickle.dump(best_genome, f)
 
@@ -92,7 +93,7 @@ class Neat(object):
         return total_reward
 
 
-def test_best_agent(generation_count, genome, net):
+def test_best_agent(generation_count, genome, net, display):
     logger.debug("Generating best agent result: %d", generation_count)
     t_start = datetime.now()
 
@@ -107,7 +108,9 @@ def test_best_agent(generation_count, genome, net):
         terminal_reached = False
         steps = 0
         while not terminal_reached:
-            env.render()
+            if display:
+                env.render()
+
             output = net.activate(state)
             action = np.argmax(output)
             next_state, reward, done, info = env.step(action)
@@ -132,8 +135,8 @@ def test_best_agent(generation_count, genome, net):
 
     # save this to file along with the generation number
     entry = [generation_count, average_steps_per_episode, average_rewards_per_episode]
-    with open(r'agent_evaluation.csv', 'a') as f:
-        writer = csv.writer(f)
+    with open(r'agent_evaluation-{0}.csv'.format(time), 'a') as file:
+        writer = csv.writer(file)
         writer.writerow(entry)
 
     logger.debug("Finished: evaluating best agent. Time taken: %f", (datetime.now() - t_start).total_seconds())
@@ -142,15 +145,16 @@ def test_best_agent(generation_count, genome, net):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=None)
     parser.add_argument('env_id', nargs='?', default='CartPole-v0', help='Select the environment to run')
+    parser.add_argument('display', nargs='?', default='true', help='Show display of game. true or false')
     args = parser.parse_args()
 
     # Call `undo_logger_setup` if you want to undo Gym's logger setup
     # and configure things manually. (The default should be fine most
     # of the time.)
     gym.undo_logger_setup()
-
-    logging.basicConfig(filename='log/debug-{0}.log'.format(datetime.now().strftime("%Y%m%d-%H:%M:%S-%f")),
-                        level=logging.DEBUG)
+    time = datetime.now().strftime("%Y%m%d-%H:%M:%S")
+    logging.basicConfig(filename='log/debug-{0}.log'.format(time),
+                        level=logging.DEBUG, format='[%(asctime)s] %(message)s')
     logger = logging.getLogger()
     formatter = logging.Formatter('[%(asctime)s] %(message)s')
     handler = logging.StreamHandler(sys.stderr)
@@ -185,21 +189,19 @@ if __name__ == '__main__':
 
     # Run until the winner from a generation is able to solve the environment
     # or the user interrupts the process.
-    env_monitor_setup = False
+    display_game = True if args.display == 'true' else False
     try:
-
         agent.execute_algorithm(props.getint('train', 'generation'))
 
-        visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness.svg")
+        visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness-{0}.svg".format(time))
 
         # generate test results and record gameplay
-        if not env_monitor_setup:
+        if display_game:
             outdir = 'videos/tmp/neat-data/{0}-{1}'.format(env.spec.id, str(datetime.now()))
             env = wrappers.Monitor(env, directory=outdir, force=True)
-            env_monitor_setup = True
 
         for (generation_count, genome, net) in agent.best_agents:
-            test_best_agent(generation_count, genome, net)
+            test_best_agent(generation_count, genome, net, display_game)
 
         mfs = sum(agent.stats.get_fitness_mean()[-20:]) / 20.0
         logger.debug("Average mean fitness over last 20 generations: %f", mfs)
