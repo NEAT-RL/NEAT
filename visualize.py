@@ -4,6 +4,8 @@ import copy
 import warnings
 
 import graphviz
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
