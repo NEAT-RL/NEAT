@@ -145,7 +145,7 @@ def test_best_agent(generation_count, genome, net, display):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=None)
     parser.add_argument('env_id', nargs='?', default='CartPole-v0', help='Select the environment to run')
-    parser.add_argument('display', nargs='?', default='true', help='Show display of game. true or false')
+    parser.add_argument('display', nargs='?', default='false', help='Show display of game. true or false')
     args = parser.parse_args()
 
     # Call `undo_logger_setup` if you want to undo Gym's logger setup
