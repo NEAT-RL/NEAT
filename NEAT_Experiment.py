@@ -11,25 +11,31 @@ import gym
 import neat
 import numpy as np
 import visualize
+import csv
+from datetime import datetime
 
 #hyper paramerters
 num_of_steps = 200
 num_of_episodes = 1
-num_of_generations = 100
+num_of_generations = 10000
 is_render = False
 #Cart Pole
 # config_path = 'properties/CartPole-v0/config'
 # env = gym.make('CartPole-v0')
 
 #Mountain Car
-config_path = 'properties/MountainCar-v0/config'
-env = gym.make('MountainCar-v0')
+# config_path = 'properties/MountainCar-v0/config'
+# env = gym.make('MountainCar-v0')
+
+# Pong-ram-v0
+config_path = 'properties/Pong-ram-v0/config'
+env = gym.make('Pong-ram-v0')
+
 
 def evaluation(genomes, config):
     for genome_id, genome in genomes:
         net = neat.nn.FeedForwardNetwork.create(genome, config)
         genome.fitness = do_rollout(net, is_render)
-
 
 def do_rollout(agent, render=False):
     total_reward = 0
@@ -59,6 +65,11 @@ def run(config):
     p.add_reporter(neat.Checkpointer(5))
 
     winner = p.run(evaluation, num_of_generations)
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+    p.add_reporter(neat.StdOutReporter(True))
+    # Checkpoint every 25 generations or 900 seconds.
+    p.add_reporter(neat.Checkpointer(10, 900))
 
     # Display the winning genome.
     print('\nBest genome:\n{!s}'.format(winner))

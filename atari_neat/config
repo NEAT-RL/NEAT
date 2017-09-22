@@ -5,14 +5,14 @@ pop_size              = 150
 # Note: the fitness threshold will never be reached because
 # we are controlling the termination ourselves based on simulation performance.
 fitness_criterion     = max
-fitness_threshold     = 1000000.0
+fitness_threshold     = 100000.0
 reset_on_extinction   = 0
 
-[DefaultGenome]
+[AtariGenome]
 num_inputs              = 128
 num_hidden              = 0
 num_outputs             = 6
-initial_connection      = full
+initial_connection      = partial 0.5
 feed_forward            = True
 compatibility_disjoint_coefficient = 1.0
 compatibility_weight_coefficient   = 1.0
@@ -62,3 +62,4 @@ species_elitism      = 4
 [DefaultReproduction]
 elitism            = 2
 survival_threshold = 0.2
+
