@@ -15,33 +15,61 @@ import gym.wrappers as wrappers
 import neat
 import numpy as np
 import visualize
+import random
+
+class AtariGenome(neat.DefaultGenome):
+    def __init__(self, key):
+        super().__init__(key)
+        self.discount = None
+
+    def configure_new(self, config):
+        super().configure_new(config)
+        self.discount = 0.01 + 0.98 * random.random()
+
+    def configure_crossover(self, genome1, genome2, config):
+        super().configure_crossover(genome1, genome2, config)
+        self.discount = random.choice((genome1.discount, genome2.discount))
+
+    def mutate(self, config):
+        super().mutate(config)
+        self.discount += random.gauss(0.0, 0.05)
+        self.discount = max(0.01, min(0.99, self.discount))
+
+    def distance(self, other, config):
+        dist = super().distance(other, config)
+        disc_diff = abs(self.discount - other.discount)
+        return dist + disc_diff
+
+    def __str__(self):
+        return "Reward discount: {0}\n{1}".format(self.discount,
+                                                  super().__str__())
 
 
 class Neat(object):
-    def __init__(self, config):
-        pop = neat.Population(config)
-        self.stats = neat.StatisticsReporter()
-        pop.add_reporter(self.stats)
-        pop.add_reporter(neat.StdOutReporter(True))
-        # Checkpoint every 10 generations or 900 seconds.
-        # pop.add_reporter(neat.Checkpointer(10, 900))
-        self.config = config
-        self.population = pop
+    def __init__(self):
+        # self.pool = None
         self.pool = multiprocessing.Pool()
         self.generation_count = 0
         self.best_agents = []
 
-    def execute_algorithm(self, generations):
-        self.population.run(self.fitness_function, generations)
-
     def fitness_function(self, genomes, config):
+        self.generation_count += 1
         t_start = datetime.now()
 
         nets = []
         for gid, g in genomes:
-            net = neat.nn.FeedForwardNetwork.create(g, config)
-            g.fitness = self.perform_rollout(net)
-            nets.append((g, net))
+            nets.append((g, neat.nn.FeedForwardNetwork.create(g, config)))
+
+        if self.pool is None:
+            for genome, net in nets:
+                genome.fitness = Neat.perform_rollout(net)
+        else:
+            jobs = []
+            for genome, net in nets:
+                jobs.append(self.pool.apply_async(Neat.perform_rollout, args=(net,)))
+
+            for job, (genome_id, genome) in zip(jobs, genomes):
+                genome.fitness = job.get(timeout=None)
 
         # sort the genomes by fitness
         nets_sorted = sorted(nets, key=lambda x: x[0].fitness, reverse=True)
@@ -49,6 +77,7 @@ class Neat(object):
         # save the best individual's genomes
         best_genome, best_net = nets_sorted[0]
         self.best_agents.append((self.generation_count, best_genome, best_net))
+        test_best_agent(self.generation_count, genome, net, display_game)
         logger.debug("Best genome fitness: %f", best_genome.fitness)
 
         worst_genome, worst_net = nets_sorted[len(nets_sorted) - 1]
@@ -60,9 +89,8 @@ class Neat(object):
 
         logger.debug("Completed generation: %d. Time taken: %f", self.generation_count,
                      (datetime.now() - t_start).total_seconds())
-        self.generation_count += 1
 
-    @staticmethod
+
     def perform_rollout(net):
         # run episodes
         state = env.reset()
@@ -144,7 +172,7 @@ def test_best_agent(generation_count, genome, net, display):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=None)
-    parser.add_argument('env_id', nargs='?', default='CartPole-v0', help='Select the environment to run')
+    parser.add_argument('env_id', nargs='?', default='Pong-ram-v0', help='Select the environment to run')
     parser.add_argument('display', nargs='?', default='false', help='Show display of game. true or false')
     args = parser.parse_args()
 
@@ -181,17 +209,24 @@ if __name__ == '__main__':
     # Load the config file, which is assumed to live in properties/[environment id] directory
     logger.debug("Loading NEAT Config file")
     config_path = os.path.join(local_dir, 'properties/{0}/config'.format(env.spec.id))
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+    config = neat.Config(AtariGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
-    agent = Neat(config)
+    pop = neat.Population(config)
+    stats = neat.StatisticsReporter()
+    pop.add_reporter(stats)
+    pop.add_reporter(neat.StdOutReporter(True))
+    # Checkpoint every 10 generations or 900 seconds.
+    # pop.add_reporter(neat.Checkpointer(10, 900))
+
+    agent = Neat()
 
     # Run until the winner from a generation is able to solve the environment
     # or the user interrupts the process.
     display_game = True if args.display == 'true' else False
     try:
-        agent.execute_algorithm(props.getint('train', 'generation'))
+        pop.run(agent.fitness_function, props.getint('train', 'generation'))
 
         visualize.plot_stats(agent.stats, ylog=False, view=False, filename="fitness-{0}.svg".format(time))
 
