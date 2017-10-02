@@ -1,37 +1,33 @@
-#!/usr/bin/env python
-
-"""Description:
-Evolving neural networks to solve atari games (ram)
-"""
+# Evolve a control/reward estimation network for the OpenAI Gym
+# LunarLander-v2 environment (https://gym.openai.com/envs/LunarLander-v2).
+# Sample run here: https://gym.openai.com/evaluations/eval_FbKq5MxAS9GlvB7W6ioJkg
 
 from __future__ import print_function
 
-import gym
-import gym.wrappers
-
 import matplotlib.pyplot as plt
-
-import multiprocessing
-import neat
-import numpy as np
+import time
+import csv
 import os
 import pickle
-import random
-import time
+from datetime import datetime
+import multiprocessing
 
+import gym
+import neat
+import numpy as np
 import visualize
+import random
 
-NUM_CORES = 8
 
-env = gym.make('Pong-ram-v0')
+env = gym.make('LunarLander-v2')
 
 print("action space: {0!r}".format(env.action_space))
 print("observation space: {0!r}".format(env.observation_space))
 
-env = gym.wrappers.Monitor(env, 'results', force=True, video_callable=False, write_upon_reset=True)
+# env = gym.wrappers.Monitor(env, 'results', force=True)
 
 
-class AtariGenome(neat.DefaultGenome):
+class LanderGenome(neat.DefaultGenome):
     def __init__(self, key):
         super().__init__(key)
         self.discount = None
@@ -71,36 +67,35 @@ def compute_fitness(genome, net, episodes, min_reward, max_reward):
         dr = np.clip(dr, -1.0, 1.0)
 
         for row, dr in zip(data, dr):
-            observation = row[:128]
-            action = int(row[128])
+            observation = row[:8]
+            action = int(row[8])
             output = net.activate(observation)
             reward_error.append(float((output[action] - dr) ** 2))
 
     return reward_error
 
 
-
 class PooledErrorCompute(object):
     def __init__(self):
-        self.pool = None if multiprocessing.cpu_count() < 2 else multiprocessing.Pool(NUM_CORES)
+        self.pool = None if multiprocessing.cpu_count() < 2 else multiprocessing.Pool()
         self.test_episodes = []
         self.generation = 0
 
-        self.min_reward = -20
-        self.max_reward = 20000
+        self.min_reward = -200
+        self.max_reward = 200
 
         self.episode_score = []
         self.episode_length = []
 
     def simulate(self, nets):
-        scores = []
+        total_rewards = []
         for genome, net in nets:
             observation = env.reset()
             step = 0
             data = []
             while 1:
                 step += 1
-                if step < 200 and random.random() < 0.01:
+                if step < 200 and random.random() < 0.2:
                     action = env.action_space.sample()
                 else:
                     output = net.activate(observation)
@@ -113,14 +108,14 @@ class PooledErrorCompute(object):
                     break
 
             data = np.array(data)
-            score = np.sum(data[:,-1])
-            self.episode_score.append(score)
-            scores.append(score)
+            total_reward = np.sum(data[:,-1])
+            self.episode_score.append(total_reward)
+            total_rewards.append(total_reward)
             self.episode_length.append(step)
 
-            self.test_episodes.append((score, data))
+            self.test_episodes.append((total_reward, data))
 
-        print("Score range [{:.3f}, {:.3f}]".format(min(scores), max(scores)))
+        print("Score range [{:.3f}, {:.3f}]".format(min(total_rewards), max(total_rewards)))
 
     def evaluate_genomes(self, genomes, config):
         self.generation += 1
@@ -150,14 +145,59 @@ class PooledErrorCompute(object):
         else:
             jobs = []
             for genome, net in nets:
-                jobs.append(self.pool.apply_async(compute_fitness,
-                    (genome, net, self.test_episodes, self.min_reward, self.max_reward)))
+                jobs.append(self.pool.apply_async(compute_fitness, (genome, net, self.test_episodes, self.min_reward, self.max_reward)))
 
             for job, (genome_id, genome) in zip(jobs, genomes):
                 reward_error = job.get(timeout=None)
                 genome.fitness = -np.sum(reward_error) / len(self.test_episodes)
 
+        # sort the genomes by fitness
+        nets_sorted = sorted(nets, key=lambda x: x[0].fitness, reverse=True)
+
+        # save the best individual's genomes
+        best_genome, best_net = nets_sorted[0]
+        test_best_agent(self.generation, best_genome, config)
+
+        # save genome to file
+        # with open('best_genomes/gen-{0}-genome'.format(self.generation), 'wb') as f:
+        #     pickle.dump(best_genome, f)
+
+        # every generation pick the best fitted genome and test agent save results to cvs.
         print("final fitness compute time {0}\n".format(time.time() - t0))
+
+
+def test_best_agent(generation_count, genome, config):
+    net = neat.nn.FeedForwardNetwork.create(genome, config)
+    test_episodes = 30
+    total_steps = 0.0
+    total_rewards = 0.0
+
+    for i in range(test_episodes):
+        state = env.reset()
+        terminal_reached = False
+        steps = 0
+        while not terminal_reached:
+
+            output = net.activate(state)
+            action = np.argmax(output)
+            next_state, reward, done, info = env.step(action)
+
+            total_rewards += reward
+            state = next_state
+
+            steps += 1
+            if done:
+                terminal_reached = True
+        total_steps += steps
+
+    average_steps_per_episode = total_steps / test_episodes
+    average_rewards_per_episode = total_rewards / test_episodes
+
+    # save this to file along with the generation number
+    entry = [generation_count, average_steps_per_episode, average_rewards_per_episode]
+    with open(r'test_results/agent_evaluation-{0}.csv'.format(time_stamp), 'a') as file:
+        writer = csv.writer(file)
+        writer.writerow(entry)
 
 
 def run():
@@ -165,7 +205,7 @@ def run():
     # the same directory as this script.
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config')
-    config = neat.Config(AtariGenome, neat.DefaultReproduction,
+    config = neat.Config(LanderGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
@@ -174,14 +214,14 @@ def run():
     pop.add_reporter(stats)
     pop.add_reporter(neat.StdOutReporter(True))
     # Checkpoint every 25 generations or 900 seconds.
-    pop.add_reporter(neat.Checkpointer(25, 900))
+    # pop.add_reporter(neat.Checkpointer(25, 900))
 
     # Run until the winner from a generation is able to solve the environment
     # or the user interrupts the process.
     ec = PooledErrorCompute()
     while 1:
         try:
-            gen_best = pop.run(ec.evaluate_genomes, 5)
+            gen_best = pop.run(ec.evaluate_genomes, 1000)
 
             #print(gen_best)
 
@@ -224,7 +264,7 @@ def run():
                     best_action = np.argmax(votes)
                     observation, reward, done, info = env.step(best_action)
                     score += reward
-                    env.render()
+                    # env.render()
                     if done:
                         break
 
@@ -234,7 +274,7 @@ def run():
                 best_scores.append(score)
                 avg_score = sum(best_scores) / len(best_scores)
                 print(k, score, avg_score)
-                if avg_score < 20:
+                if avg_score < 200:
                     solved = False
                     break
 
@@ -262,4 +302,5 @@ def run():
 
 
 if __name__ == '__main__':
+    time_stamp = datetime.now().strftime("%Y%m%d-%H:%M:%S")
     run()

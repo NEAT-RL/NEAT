@@ -15,23 +15,23 @@ import csv
 from datetime import datetime
 
 #hyper paramerters
-num_of_steps = 1000
+num_of_steps = 200
 num_of_episodes = 1
 num_of_generations = 100
 test_episodes = 1
 time = datetime.now().strftime("%Y%m%d-%H:%M:%S")
 is_render = False
 #Cart Pole
-# config_path = 'properties/CartPole-v0/config'
-# env = gym.make('CartPole-v0')
+config_path = 'properties/CartPole-v0/config'
+env = gym.make('CartPole-v0')
 
 #Mountain Car
 # config_path = 'properties/MountainCar-v0/config'
 # env = gym.make('MountainCar-v0')
 
-# MountainCarExtraLong
-config_path = 'properties/MountainExtraLongCar-v0/config'
-env = gym.make('MountainExtraLongCar-v0')
+# Pong-ram-v0
+# config_path = 'properties/MountainExtraLongCar-v0/config'
+# env = gym.make('MountainExtraLongCar-v0')
 print("action space: ", env.action_space)
 print("observation space: ", env.observation_space)
 
@@ -70,7 +70,6 @@ def do_rollout(agent, render=False):
 
 
 def test_best_agent(generation_count, net, render=False):
-
     total_steps = []
     total_rewards = []
 
@@ -79,14 +78,13 @@ def test_best_agent(generation_count, net, render=False):
         steps = 0
         rewards = 0
         while True:
-            if render:
-                env.render()
-
             output = net.activate(ob)
             action = np.argmax(output)
             ob, reward, done, info = env.step(action)
 
             rewards += reward
+            if render and steps % 3 == 0:
+                env.render()
 
             steps += 1
             if done:
@@ -103,7 +101,6 @@ def test_best_agent(generation_count, net, render=False):
     with open(r'results/agent_evaluation-{0}.csv'.format(time), 'a') as file:
         writer = csv.writer(file)
         writer.writerow(entry)
-
 
 
 def run(config):
