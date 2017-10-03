@@ -35,7 +35,7 @@ env = gym.make('MountainExtraLongCar-v0')
 print("action space: ", env.action_space)
 print("observation space: ", env.observation_space)
 
-generation = 0
+generation = 1
 
 
 def evaluation(genomes, config):
@@ -50,8 +50,9 @@ def evaluation(genomes, config):
 
     # save the best individual's genomes
     best_genome, best_net = nets_sorted[0]
+    global generation
     test_best_agent(generation, best_net, is_render)
-    generation += 1
+    generation = generation + 1
 
 
 def do_rollout(agent, render=False):
