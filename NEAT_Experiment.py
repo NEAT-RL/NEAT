@@ -51,6 +51,7 @@ def evaluation(genomes, config):
     # save the best individual's genomes
     best_genome, best_net = nets_sorted[0]
     test_best_agent(generation, best_net, is_render)
+    generation += 1
 
 
 def do_rollout(agent, render=False):
